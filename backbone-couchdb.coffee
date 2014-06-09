@@ -4,9 +4,10 @@ v1.3
 backbone-couchdb.js is licensed under the MIT license.
 ###
 
+
 Backbone.couch_connector = con =
   # some default config values for the database connections
-  config : 
+  config :
     db_name : "backbone_connect"
     ddoc_name : "backbone_example"
     view_name : "byCollection"
@@ -17,14 +18,18 @@ Backbone.couch_connector = con =
     single_feed : false
     # change the databse base_url to be able to fetch from a remote couchdb
     base_url : null
-  
+
   # global changes feed for all collections
   _global_db_inst: null
   _global_changes_handler: null
   _global_changes_callbacks: []
-  
+
+  # global queue to store models to delete
+  deletion_list: []
+  options: null
+
   # some helper methods for the connector
-  helpers : 
+  helpers :
     # returns a string representing the collection (needed for the "collection"-field)
     extract_collection_name : (model) ->
       throw new Error("No model has been passed") unless model?
@@ -163,6 +168,7 @@ Backbone.couch_connector = con =
     throw new Error("The model has no id property, so it can't get fetched from the database") unless model.id
     @helpers.make_db().openDoc model.id,
       success : (doc) -> 
+        con.clear_deletion_list()
         opts.success(doc)
         opts.complete()
       error : (status, error, reason) ->
@@ -180,6 +186,7 @@ Backbone.couch_connector = con =
     vals.collection = coll if coll.length > 0
     @helpers.make_db().saveDoc vals,
       success : (doc) ->
+        con.clear_deletion_list()
         opts.success
           _id : doc.id
           _rev : doc.rev
@@ -198,8 +205,15 @@ Backbone.couch_connector = con =
 
   # Deletes a model from the db
   del : (model, opts) ->
+    con.deletion_list.push(model)
+    con.options = opts
     @helpers.make_db().removeDoc model.toJSON(),
       success : ->
+        con.deletion_list.pop()
+        console.log "Called clear_deletion_list"
+        con.clear_deletion_list()
+        console.log "Reset array"
+        con.deletion_list = []
         opts.success()
       error : (nr, req, error) ->
         if error is "deleted"
@@ -207,10 +221,26 @@ Backbone.couch_connector = con =
           opts.success()
           opts.complete()
         else
+          console.log "Putting into local storage"
+          localStorage.setItem("deletion_list", JSON.stringify(con.deletion_list))
           res = 
             error: error
           opts.error res
           opts.complete res
+
+  # Helper function to clear deletion_list
+  clear_deletion_list: () ->
+    retrieved = JSON.parse(localStorage.getItem("deletion_list"))
+    if (not retrieved?)
+      return
+    console.log "Retrieved successfully"
+    while (retrieved.length > 0)
+      current = retrieved.pop()
+      console.log "Going to call the con.del function"
+      con.del(new Backbone.Model(current), con.options)
+
+    localStorage.removeItem("deletion_list");
+    con.deletion_list = []
 
 # Overriding the sync method here to make the connector work ###
 Backbone.sync = (method, model, opts) ->
