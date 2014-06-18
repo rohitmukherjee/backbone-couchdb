@@ -4,7 +4,6 @@ v1.3
 backbone-couchdb.js is licensed under the MIT license.
 ###
 
-
 Backbone.couch_connector = con =
   # some default config values for the database connections
   config :
@@ -26,6 +25,7 @@ Backbone.couch_connector = con =
 
   # global queue to store models to delete
   deletion_list: []
+  creation_list: []
   options: null
 
   # some helper methods for the connector
@@ -181,17 +181,22 @@ Backbone.couch_connector = con =
   
   # Creates a model in the db
   create : (model, opts) ->
+    con.creation_list.push(model)
+    con.options = opts
     vals = model.toJSON()
     coll = @helpers.extract_collection_name model
     vals.collection = coll if coll.length > 0
     @helpers.make_db().saveDoc vals,
       success : (doc) ->
         con.clear_deletion_list()
+        con.creation_list.pop()
+        con.clear_creation_list()
         opts.success
           _id : doc.id
           _rev : doc.rev
         opts.complete()
       error : (status, error, reason) ->
+        localStorage.setItem("creation_list", JSON.stringify(con.creation_list))
         res = 
           status: status
           error: error
@@ -209,11 +214,9 @@ Backbone.couch_connector = con =
     con.options = opts
     @helpers.make_db().removeDoc model.toJSON(),
       success : ->
-        con.deletion_list.pop()
+        _.reject @deletion_list, (m) -> m is model
         console.log "Called clear_deletion_list"
         con.clear_deletion_list()
-        console.log "Reset array"
-        con.deletion_list = []
         opts.success()
       error : (nr, req, error) ->
         if error is "deleted"
@@ -241,6 +244,20 @@ Backbone.couch_connector = con =
 
     localStorage.removeItem("deletion_list");
     con.deletion_list = []
+
+  # Helper function to clear creation_list
+  clear_creation_list: () ->
+    retrieved = JSON.parse(localStorage.getItem("creation_list"))
+    if (not retrieved?)
+      return
+    console.log "Retrieved successfully"
+    while (retrieved.length > 0)
+      current = retrieved.pop()
+      console.log "Going to call the con.create function"
+      con.create(new Backbone.Model(current), con.options)
+
+    localStorage.removeItem("creation_list");
+    con.creation_list = []
 
 # Overriding the sync method here to make the connector work ###
 Backbone.sync = (method, model, opts) ->
